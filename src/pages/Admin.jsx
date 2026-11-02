@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api.js';
+import AdminNotifications from '../components/AdminNotifications.jsx';
 
 export default function Admin() {
   const [authed, setAuthed] = useState(null);
+  const logout = useCallback(() => setAuthed(false), []);
 
   useEffect(() => {
     api
@@ -12,7 +14,7 @@ export default function Admin() {
   }, []);
 
   if (authed === null) return <p className="card muted">Loading…</p>;
-  return authed ? <AdminPanel onLogout={() => setAuthed(false)} /> : <AdminLogin onLogin={() => setAuthed(true)} />;
+  return authed ? <AdminPanel onLogout={logout} /> : <AdminLogin onLogin={() => setAuthed(true)} />;
 }
 
 function AdminLogin({ onLogin }) {
@@ -65,6 +67,7 @@ function AdminPanel({ onLogout }) {
   const [filter, setFilter] = useState('');
   const [message, setMessage] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [activeTab, setActiveTab] = useState('people');
 
   const load = () =>
     api
@@ -75,6 +78,23 @@ function AdminPanel({ onLogout }) {
   useEffect(() => {
     load();
   }, []);
+
+  const tabs = [
+    { id: 'people', label: 'Manage people' },
+    { id: 'notifications', label: 'Set notifications' },
+  ];
+
+  const handleTabKeyDown = (event, index) => {
+    let next;
+    if (event.key === 'ArrowRight') next = (index + 1) % tabs.length;
+    else if (event.key === 'ArrowLeft') next = (index + tabs.length - 1) % tabs.length;
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = tabs.length - 1;
+    else return;
+    event.preventDefault();
+    setActiveTab(tabs[next].id);
+    event.currentTarget.parentElement.querySelectorAll('[role="tab"]')[next].focus();
+  };
 
   const handleAuthError = (e) => {
     if (e.status === 401) onLogout();
@@ -119,12 +139,34 @@ function AdminPanel({ onLogout }) {
   return (
     <section className="card">
       <div className="row-between">
-        <h1>Manage camp players</h1>
+        <h1>Camp administration</h1>
         <button className="btn btn-ghost" onClick={logout}>
           Log out
         </button>
       </div>
 
+      <div className="admin-tabs" role="tablist" aria-label="Administration">
+        {tabs.map((tab, index) => (
+          <button
+            key={tab.id}
+            id={`admin-tab-${tab.id}`}
+            type="button"
+            role="tab"
+            className="btn btn-ghost"
+            aria-selected={activeTab === tab.id}
+            aria-controls={`admin-panel-${tab.id}`}
+            tabIndex={activeTab === tab.id ? 0 : -1}
+            onClick={() => setActiveTab(tab.id)}
+            onKeyDown={(event) => handleTabKeyDown(event, index)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      <div id="admin-panel-people" role="tabpanel" aria-labelledby="admin-tab-people"
+        hidden={activeTab !== 'people'} tabIndex={0}>
+      <h2>Manage camp players</h2>
       <form className="add-form" onSubmit={add}>
         <input
           className="input"
@@ -155,6 +197,11 @@ function AdminPanel({ onLogout }) {
         ))}
         {visible.length === 0 && <li className="muted">No players found.</li>}
       </ul>
+      </div>
+      <div id="admin-panel-notifications" role="tabpanel" aria-labelledby="admin-tab-notifications"
+        hidden={activeTab !== 'notifications'} tabIndex={0}>
+        <AdminNotifications onLogout={onLogout} />
+      </div>
     </section>
   );
 }

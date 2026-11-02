@@ -12,4 +12,11 @@ CREATE TABLE IF NOT EXISTS availability (
   PRIMARY KEY (person_id, session_date)
 );
 
+CREATE TABLE IF NOT EXISTS notifications (
+  notification_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+  notification_date TEXT NOT NULL, -- YYYY-MM-DD of the notification
+  notification_type TEXT NOT NULL, -- Type of the notification (e.g., 'email', 'sms')
+  notification_message TEXT NOT NULL -- Message content of the notification
+);
+
 CREATE INDEX IF NOT EXISTS idx_availability_date ON availability (session_date, status);

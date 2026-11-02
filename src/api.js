@@ -16,6 +16,10 @@ async function request(path, options = {}) {
 
 export const api = {
   getPeople: () => request('/api/people'),
+  getNotifications: (options = {}) => request('/api/notifications', options),
+  getAdminNotifications: () => request('/api/admin/notifications'),
+  addNotification: (notification) =>
+    request('/api/admin/notifications', { method: 'POST', body: notification }),
   getAvailability: (day = 'tomorrow', options = {}) =>
     request(`/api/availability?day=${encodeURIComponent(day)}`, options),
   setAvailability: (personId, status) => request('/api/availability', { method: 'POST', body: { personId, status } }),

@@ -42,6 +42,8 @@ function fixture() {
           operations.push(sql);
           if (sql.startsWith('DELETE FROM availability WHERE session_date NOT IN')) {
             rows = rows.filter((row) => args.includes(row.session_date));
+          } else if (sql === 'DELETE FROM notifications WHERE notification_date < ?') {
+            return;
           } else if (sql.startsWith('INSERT INTO availability')) {
             const [id, date, status] = args;
             rows = rows.filter((row) => row.person_id !== id || row.session_date !== date);

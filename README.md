@@ -12,7 +12,31 @@ Players mark whether they'll attend **tomorrow's** coaching session; the coach s
 | ------------ | ------- | -------------------------------------------------------------------- |
 | `/`          | Players | Searchable name dropdown + **Available** / **Not Available** buttons |
 | `/dashboard` | Players | Choose Today or Tomorrow (default), see available players and counts; auto-refreshes |
-| `/admin`     | Coach   | Password login, add / remove players                                 |
+| `/admin`     | Coach   | Password login; separate Manage people and Set notifications tabs |
+
+The admin view opens on **Manage people**. Switch to **Set notifications** to
+schedule notices. Form entries are preserved while switching tabs; the tabs also
+support Left/Right arrow keys, Home, and End.
+
+## Camp notifications
+
+The admin page includes a notification form for **Camp holiday** or **Coaching plan**,
+a message (up to 2000 characters), and a display date of today or later.
+The availability form shows every notice scheduled for the current calendar date
+in the camp timezone, not the next day's session date. Future notices remain hidden
+until that date. Holiday notices are informational and do not block responses.
+Notices refresh every 30 seconds and when the window regains focus.
+
+The `notifications` table has `notification_id`, `notification_message`,
+`notification_date` (YYYY-MM-DD), and `notification_type` (`camp_holiday` or
+`coaching_plan`). The type column uses the corrected spelling `notification_type`.
+Every API request deletes notifications dated before today, while keeping today's
+and all future notices. As with availability cleanup, deletion waits for a request
+if nobody is using the app. Scheduled notices are listed in the admin view.
+
+**Updating an existing deployment:** run `npm run db:migrate:remote` **before**
+`npm run deploy` to create the notifications table. Locally, run
+`npm run db:migrate:local` before starting the updated app.
 
 "Tomorrow" is calculated on the server using the `TIMEZONE` var in `wrangler.jsonc` (default `Asia/Kolkata`).
 A player can change their answer any time; the latest answer wins.
@@ -23,6 +47,10 @@ not available). Use **Change my response** to show all players and update an ans
 Successful submissions immediately remove the player from the default list; saved
 name selections are only restored if that player has not responded. Today's
 responses do not exclude a player from tomorrow's form.
+After a successful save, Available plays a short badminton smash animation and
+Not Available plays a missed-shuttle animation. Failed saves do not play an
+animation. The animations respect reduced-motion preferences and do not block
+the form; the text confirmation remains after the animation disappears.
 
 Only today's and tomorrow's availability is retained. On every API request
 (including the requests made when loading the form, dashboard, or admin page),
@@ -43,6 +71,9 @@ It is request-driven: if nobody uses the app, cleanup waits until the next API r
 | GET    | `/api/admin/me`          | Admin | Check session                                   |
 | POST   | `/api/admin/people`      | Admin | `{ name }` add player                           |
 | DELETE | `/api/admin/people/:id`  | Admin | Remove player (and their responses)             |
+| GET    | `/api/notifications` | – | Today's camp notices and server date |
+| GET    | `/api/admin/notifications` | Admin | Today's and future notices, plus server date |
+| POST   | `/api/admin/notifications` | Admin | `{ notification_type, notification_message, notification_date }` |
 
 ## Run locally
 

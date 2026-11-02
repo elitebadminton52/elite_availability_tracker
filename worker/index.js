@@ -15,6 +15,9 @@ export default {
       await env.DB.prepare('DELETE FROM availability WHERE session_date NOT IN (?, ?)')
         .bind(dates.today, dates.tomorrow)
         .run();
+      await env.DB.prepare('DELETE FROM notifications WHERE notification_date < ?')
+        .bind(dates.today)
+        .run();
       return await route(request, env, url, dates);
     } catch (err) {
       console.error(err);
@@ -28,6 +31,13 @@ async function route(request, env, url, dates) {
   const method = request.method;
 
   // ---------- Public API ----------
+  if (pathname === '/api/notifications' && method === 'GET') {
+    const { results } = await env.DB.prepare(
+      'SELECT * FROM notifications WHERE notification_date = ? ORDER BY notification_id DESC'
+    ).bind(dates.today).all();
+    return json({ date: dates.today, notifications: results });
+  }
+
   if (pathname === '/api/people' && method === 'GET') {
     const { results } = await env.DB.prepare('SELECT id, name FROM people ORDER BY name COLLATE NOCASE').all();
     return json({ people: results });
@@ -105,6 +115,36 @@ async function route(request, env, url, dates) {
 
     if (pathname === '/api/admin/me' && method === 'GET') {
       return json({ ok: true });
+    }
+
+    if (pathname === '/api/admin/notifications' && method === 'GET') {
+      const { results } = await env.DB.prepare(
+        'SELECT * FROM notifications WHERE notification_date >= ? ORDER BY notification_date, notification_id DESC'
+      ).bind(dates.today).all();
+      return json({ date: dates.today, notifications: results });
+    }
+
+    if (pathname === '/api/admin/notifications' && method === 'POST') {
+      const body = await readJson(request);
+      const message = typeof body?.notification_message === 'string' ? body.notification_message.trim() : '';
+      const date = body?.notification_date;
+      const type = body?.notification_type;
+      if (type !== 'camp_holiday' && type !== 'coaching_plan') {
+        return json({ error: 'Select Camp holiday or Coaching plan' }, 400);
+      }
+      if (!message || message.length > 2000) {
+        return json({ error: 'Notification message is required (max 2000 characters)' }, 400);
+      }
+      if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+          !Number.isFinite(Date.parse(`${date}T00:00:00Z`)) ||
+          new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date || date < dates.today) {
+        return json({ error: 'Select a valid date of today or later in the camp timezone' }, 400);
+      }
+      const notification = await env.DB.prepare(
+        `INSERT INTO notifications (notification_message, notification_date, notification_type)
+         VALUES (?, ?, ?) RETURNING *`
+      ).bind(message, date, type).first();
+      return json({ notification }, 201);
     }
 
     if (pathname === '/api/admin/people' && method === 'POST') {
