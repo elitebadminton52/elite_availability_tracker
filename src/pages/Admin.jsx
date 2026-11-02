@@ -152,7 +152,7 @@ function AdminPanel({ onLogout }) {
             id={`admin-tab-${tab.id}`}
             type="button"
             role="tab"
-            className="btn btn-ghost"
+            className="btn-tab btn-ghost"
             aria-selected={activeTab === tab.id}
             aria-controls={`admin-panel-${tab.id}`}
             tabIndex={activeTab === tab.id ? 0 : -1}

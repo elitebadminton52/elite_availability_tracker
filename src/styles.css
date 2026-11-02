@@ -183,6 +183,16 @@ h2 {
   margin-top: 1.25rem;
 }
 
+.btn-tab {
+  border: none;
+  padding: 1rem 1rem;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 0.15s;
+  width: 50%
+}
+
 .btn {
   border: none;
   border-radius: 10px;
@@ -358,7 +368,7 @@ h2 {
 .admin-tabs {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
+  justify-content: center;
   border-bottom: 1px solid var(--border);
   margin: 1.25rem 0;
   padding-bottom: 0.75rem;
