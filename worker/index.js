@@ -1,3 +1,5 @@
+import { sessionDates } from './dates.js';
+
 const SESSION_COOKIE = 'admin_session';
 const SESSION_TTL_SECONDS = 60 * 60 * 12; // 12 hours
 const STATUSES = new Set(['available', 'not_available']);
@@ -9,7 +11,11 @@ export default {
       return new Response('Not found', { status: 404 });
     }
     try {
-      return await route(request, env, url);
+      const dates = sessionDates(env);
+      await env.DB.prepare('DELETE FROM availability WHERE session_date NOT IN (?, ?)')
+        .bind(dates.today, dates.tomorrow)
+        .run();
+      return await route(request, env, url, dates);
     } catch (err) {
       console.error(err);
       return json({ error: 'Internal server error' }, 500);
@@ -17,7 +23,7 @@ export default {
   },
 };
 
-async function route(request, env, url) {
+async function route(request, env, url, dates) {
   const { pathname } = url;
   const method = request.method;
 
@@ -28,7 +34,11 @@ async function route(request, env, url) {
   }
 
   if (pathname === '/api/availability' && method === 'GET') {
-    const date = sessionDate(env);
+    const day = url.searchParams.get('day') ?? 'tomorrow';
+    if (day !== 'today' && day !== 'tomorrow') {
+      return json({ error: 'day must be today or tomorrow' }, 400);
+    }
+    const date = dates[day];
     const { results } = await env.DB.prepare(
       `SELECT p.id, p.name, a.status, a.updated_at
          FROM availability a JOIN people p ON p.id = a.person_id
@@ -56,7 +66,7 @@ async function route(request, env, url) {
     const person = await env.DB.prepare('SELECT id, name FROM people WHERE id = ?').bind(personId).first();
     if (!person) return json({ error: 'Person not found' }, 404);
 
-    const date = sessionDate(env);
+    const date = dates.tomorrow;
     await env.DB.prepare(
       `INSERT INTO availability (person_id, session_date, status, updated_at)
        VALUES (?, ?, ?, datetime('now'))
@@ -141,20 +151,6 @@ async function readJson(request) {
   } catch {
     return null;
   }
-}
-
-/** The coaching session date = tomorrow, in the configured timezone (YYYY-MM-DD). */
-function sessionDate(env) {
-  const tz = env.TIMEZONE || 'Asia/Kolkata';
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: tz,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(new Date());
-  const get = (type) => Number(parts.find((p) => p.type === type).value);
-  const tomorrow = new Date(Date.UTC(get('year'), get('month') - 1, get('day') + 1));
-  return tomorrow.toISOString().slice(0, 10);
 }
 
 const encoder = new TextEncoder();

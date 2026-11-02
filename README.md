@@ -11,18 +11,32 @@ Players mark whether they'll attend **tomorrow's** coaching session; the coach s
 | Route        | Who     | What                                                                 |
 | ------------ | ------- | -------------------------------------------------------------------- |
 | `/`          | Players | Searchable name dropdown + **Available** / **Not Available** buttons |
-| `/dashboard` | Players | List of people available tomorrow (+ counts), auto-refreshes          |
+| `/dashboard` | Players | Choose Today or Tomorrow (default), see available players and counts; auto-refreshes |
 | `/admin`     | Coach   | Password login, add / remove players                                 |
 
 "Tomorrow" is calculated on the server using the `TIMEZONE` var in `wrangler.jsonc` (default `Asia/Kolkata`).
 A player can change their answer any time; the latest answer wins.
+The form always submits for tomorrow. The dashboard can display today or tomorrow,
+using the same server timezone regardless of the device's timezone.
+The form hides players who have already responded for tomorrow (both available and
+not available). Use **Change my response** to show all players and update an answer.
+Successful submissions immediately remove the player from the default list; saved
+name selections are only restored if that player has not responded. Today's
+responses do not exclude a player from tomorrow's form.
+
+Only today's and tomorrow's availability is retained. On every API request
+(including the requests made when loading the form, dashboard, or admin page),
+the server deletes records for all other dates before processing the request.
+This permanently removes older responses and any out-of-window future records,
+but never deletes camp players. Cleanup also runs on dashboard auto-refresh.
+It is request-driven: if nobody uses the app, cleanup waits until the next API request.
 
 ## API
 
 | Method | Path                     | Auth  | Description                                     |
 | ------ | ------------------------ | ----- | ----------------------------------------------- |
 | GET    | `/api/people`            | –     | List players                                    |
-| GET    | `/api/availability`      | –     | Tomorrow's date + available / not available     |
+| GET    | `/api/availability`      | –     | `?day=today` or `?day=tomorrow` (default); selected date + available / not available; other values return 400 |
 | POST   | `/api/availability`      | –     | `{ personId, status: "available" \| "not_available" }` |
 | POST   | `/api/admin/login`       | –     | `{ password }` → sets HttpOnly session cookie   |
 | POST   | `/api/admin/logout`      | –     | Clears session                                  |
@@ -38,6 +52,9 @@ Copy-Item .dev.vars.example .dev.vars   # then edit ADMIN_PASSWORD / SESSION_SEC
 npm run db:migrate:local               # creates the local D1 tables
 npm run dev                            # http://localhost:5173
 ```
+
+Run `npm test` for timezone, dashboard API, retention, and submission regression tests,
+and `npm run build` to validate the production build.
 
 ## Deploy to Cloudflare
 

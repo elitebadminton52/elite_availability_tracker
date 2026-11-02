@@ -1,39 +1,63 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api, formatDate } from '../api.js';
 
 export default function Dashboard() {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [day, setDay] = useState('tomorrow');
+  const [refresh, setRefresh] = useState(0);
 
-  const load = useCallback(() => {
+  useEffect(() => {
+    const controller = new AbortController();
     setLoading(true);
     api
-      .getAvailability()
+      .getAvailability(day, { signal: controller.signal })
       .then((d) => {
+        if (controller.signal.aborted) return;
         setData(d);
         setError('');
       })
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, []);
+      .catch((e) => {
+        if (!controller.signal.aborted) setError(e.message);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [day, refresh]);
 
   useEffect(() => {
-    load();
-    const timer = setInterval(load, 30000);
+    const timer = setInterval(() => setRefresh((value) => value + 1), 30000);
     return () => clearInterval(timer);
-  }, [load]);
+  }, []);
 
   const responded = data ? data.available.length + data.notAvailable.length : 0;
 
   return (
     <section className="card">
       <div className="row-between">
-        <h1>Available for tomorrow</h1>
-        <button className="btn btn-ghost" onClick={load} disabled={loading}>
+        <h1>Available for {day}</h1>
+        <button className="btn btn-ghost" onClick={() => setRefresh((value) => value + 1)} disabled={loading}>
           {loading ? 'Refreshing…' : 'Refresh'}
         </button>
       </div>
+      <label className="label" htmlFor="session-day">Session day</label>
+      <select
+        id="session-day"
+        className="input"
+        value={day}
+        onChange={(e) => {
+          setDay(e.target.value);
+          setData(null);
+          setError('');
+          setLoading(true);
+        }}
+      >
+        <option value="today">Today</option>
+        <option value="tomorrow">Tomorrow</option>
+      </select>
+      {loading && !data && <p className="muted" role="status">Loading availability…</p>}
       {data && <p className="muted">Session: {formatDate(data.date)}</p>}
       {error && <div className="alert alert-error">{error}</div>}
 
