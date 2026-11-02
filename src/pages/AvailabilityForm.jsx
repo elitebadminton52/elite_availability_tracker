@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import SearchableSelect from '../components/SearchableSelect.jsx';
 import Notifications from '../components/Notifications.jsx';
-import BadmintonReaction from '../components/BadmintonReaction.jsx';
 import { api, formatDate } from '../api.js';
 import { availabilityOptions } from '../availability-options.js';
 
@@ -18,7 +17,6 @@ export default function AvailabilityForm() {
   const [availability, setAvailability] = useState({ available: [], notAvailable: [] });
   const [showResponded, setShowResponded] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
-  const [reaction, setReaction] = useState(null);
   const options = availabilityOptions(people, availability, showResponded);
   const selectedPerson = options.find((person) => person.id === personId);
 
@@ -48,10 +46,8 @@ export default function AvailabilityForm() {
     if (!selectedPerson || saving) return;
     setSaving(status);
     setMessage(null);
-    setReaction(null);
     try {
       const res = await api.setAvailability(personId, status);
-      setReaction(status);
       setAvailability((previous) => {
         const current = res.date === sessionDate ? previous : { available: [], notAvailable: [] };
         return {
@@ -103,7 +99,6 @@ export default function AvailabilityForm() {
           onChange={(id) => {
             setPersonId(id);
             setMessage(null);
-            setReaction(null);
           }}
           placeholder="Search your name…"
         />
@@ -119,7 +114,6 @@ export default function AvailabilityForm() {
               setShowResponded((value) => !value);
               setPersonId(null);
               setMessage(null);
-              setReaction(null);
             }}
           >
             {showResponded ? 'Show only players who have not responded' : 'Change my response'}
@@ -136,7 +130,6 @@ export default function AvailabilityForm() {
         </button>
       </div>
 
-      {reaction && <BadmintonReaction key={reaction} status={reaction} />}
       {message && <div role={message.type === 'error' ? 'alert' : 'status'} className={`alert alert-${message.type}`}>{message.text}</div>}
 
       <p className="muted small">

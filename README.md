@@ -47,10 +47,6 @@ not available). Use **Change my response** to show all players and update an ans
 Successful submissions immediately remove the player from the default list; saved
 name selections are only restored if that player has not responded. Today's
 responses do not exclude a player from tomorrow's form.
-After a successful save, Available plays a short badminton smash animation and
-Not Available plays a missed-shuttle animation. Failed saves do not play an
-animation. The animations respect reduced-motion preferences and do not block
-the form; the text confirmation remains after the animation disappears.
 
 Only today's and tomorrow's availability is retained. On every API request
 (including the requests made when loading the form, dashboard, or admin page),
