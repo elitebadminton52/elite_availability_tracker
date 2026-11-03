@@ -374,6 +374,24 @@ h2 {
   padding-bottom: 0.75rem;
 }
 
+.registration-approvals {
+  margin: 1.5rem 0;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.registration-request {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem;
+  margin-top: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.registration-request h3 {
+  margin: 0;
+}
+
 .admin-tabs [aria-selected="true"] {
   background: var(--primary);
   color: #fff;

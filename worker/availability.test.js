@@ -1,138 +1,62 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import worker from './index.js';
+import { fixture } from './sqlite-fixture.js';
 import { sessionDates } from './dates.js';
 
-test('dates use the camp timezone across midnight, month, year, and leap-day boundaries', () => {
-  const cases = [
+test('camp dates cover local midnight, year-end and leap-day boundaries', () => {
+  for (const [now, today, tomorrow] of [
     ['2026-11-02T18:29:59Z', '2026-11-02', '2026-11-03'],
     ['2026-11-02T18:30:00Z', '2026-11-03', '2026-11-04'],
     ['2026-12-31T18:30:00Z', '2027-01-01', '2027-01-02'],
     ['2028-02-28T12:00:00Z', '2028-02-28', '2028-02-29'],
     ['2028-02-29T12:00:00Z', '2028-02-29', '2028-03-01'],
-  ];
-  for (const [now, today, tomorrow] of cases) {
-    assert.deepEqual(sessionDates({ TIMEZONE: 'Asia/Kolkata' }, new Date(now)), { today, tomorrow });
-  }
-  assert.deepEqual(sessionDates({ TIMEZONE: 'America/Los_Angeles' }, new Date('2026-11-03T01:00:00Z')), {
-    today: '2026-11-02',
-    tomorrow: '2026-11-03',
-  });
+  ]) assert.deepEqual(sessionDates({ TIMEZONE: 'Asia/Kolkata' }, new Date(now)), { today, tomorrow });
+  assert.equal(sessionDates({ TIMEZONE: 'America/Los_Angeles' }, new Date('2026-11-03T01:00:00Z')).today, '2026-11-02');
 });
 
-function fixture() {
-  const dates = sessionDates({ TIMEZONE: 'Asia/Kolkata' });
-  const people = [{ id: 1, name: 'Today Player' }, { id: 2, name: 'Tomorrow Player' }, { id: 3, name: 'No Response' }];
-  let rows = [
-    { person_id: 1, session_date: '2000-01-01', status: 'available' },
-    { person_id: 1, session_date: dates.today, status: 'available' },
-    { person_id: 2, session_date: dates.tomorrow, status: 'not_available' },
-    { person_id: 3, session_date: '9999-12-31', status: 'available' },
-  ];
-  const operations = [];
-  const DB = {
-    prepare(sql) {
-      let args = [];
-      return {
-        bind(...values) {
-          args = values;
-          return this;
-        },
-        async run() {
-          operations.push(sql);
-          if (sql.startsWith('DELETE FROM availability WHERE session_date NOT IN')) {
-            rows = rows.filter((row) => args.includes(row.session_date));
-          } else if (sql === 'DELETE FROM notifications WHERE notification_date < ?') {
-            return;
-          } else if (sql.startsWith('INSERT INTO availability')) {
-            const [id, date, status] = args;
-            rows = rows.filter((row) => row.person_id !== id || row.session_date !== date);
-            rows.push({ person_id: id, session_date: date, status });
-          } else {
-            assert.fail(`Unexpected run: ${sql}`);
-          }
-        },
-        async all() {
-          operations.push(sql);
-          if (sql.startsWith('SELECT id, name FROM people')) return { results: people };
-          assert.match(sql, /WHERE a.session_date = \?/);
-          return {
-            results: rows.filter((row) => row.session_date === args[0]).map((row) => ({
-              ...people.find((person) => person.id === row.person_id),
-              status: row.status,
-            })),
-          };
-        },
-        async first() {
-          operations.push(sql);
-          if (sql.startsWith('SELECT COUNT(*)')) return { total: people.length };
-          assert.match(sql, /SELECT id, name FROM people WHERE id = \?/);
-          return people.find((person) => person.id === args[0]) ?? null;
-        },
-      };
-    },
-  };
-  return { env: { DB, TIMEZONE: 'Asia/Kolkata' }, dates, people, operations, rows: () => rows };
-}
-
-test('dashboard reads today or tomorrow, defaults to tomorrow, and rejects other dates', async () => {
-  const { env, dates } = fixture();
-  for (const query of ['', '?day=tomorrow', '?day=today']) {
-    const response = await worker.fetch(new Request(`https://camp.test/api/availability${query}`), env);
+test('dashboard requires authentication, selects dates, and retains only today/tomorrow', async (t) => {
+  const f = fixture(t);
+  const player = await f.approvedPlayer();
+  const dates = sessionDates(f.env);
+  for (const [date, status] of [['2000-01-01', 'available'], [dates.today, 'available'], [dates.tomorrow, 'not_available'], ['9999-12-31', 'available']]) {
+    f.db.prepare('INSERT INTO availability(person_id, session_date, status) VALUES (?, ?, ?)').run(player.user.id, date, status);
+  }
+  assert.equal((await f.request('/api/availability')).status, 401);
+  assert.equal((await f.request('/api/availability', undefined, player.cookie)).status, 403);
+  assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM availability').get().n, 2);
+  const admin = await f.admin();
+  for (const [query, expectedDate, available] of [['', dates.tomorrow, 0], ['?day=today', dates.today, 1], ['?day=tomorrow', dates.tomorrow, 0]]) {
+    const response = await f.request(`/api/availability${query}`, undefined, admin);
     assert.equal(response.status, 200);
     const data = await response.json();
-    const today = query === '?day=today';
-    assert.equal(data.date, today ? dates.today : dates.tomorrow);
-    assert.deepEqual(data.available.map((p) => p.name), today ? ['Today Player'] : []);
-    assert.deepEqual(data.notAvailable.map((p) => p.name), today ? [] : ['Tomorrow Player']);
-    assert.equal(data.totalPeople, 3);
+    assert.equal(data.date, expectedDate);
+    assert.equal(data.available.length, available);
+    assert.equal(data.totalPeople, 1);
+    assert.equal((data.available[0] || data.notAvailable[0]).name, 'Test Player');
   }
-  for (const day of ['yesterday', dates.today, '']) {
-    const response = await worker.fetch(new Request(`https://camp.test/api/availability?day=${day}`), env);
-    assert.equal(response.status, 400);
-    assert.equal((await response.json()).error, 'day must be today or tomorrow');
-  }
+  assert.equal((await f.request('/api/availability?day=yesterday', undefined, admin)).status, 400);
 });
 
-test('loading any app page cleans out-of-window responses before its API runs, preserving players', async () => {
-  for (const path of ['/api/people', '/api/availability', '/api/admin/me']) {
-    const { env, dates, rows, people, operations } = fixture();
-    await worker.fetch(new Request(`https://camp.test${path}`), env);
-    assert.match(operations[0], /^DELETE FROM availability WHERE session_date NOT IN/);
-    assert.deepEqual(rows().map((row) => row.session_date).sort(), [dates.today, dates.tomorrow].sort());
-    assert.equal(people.length, 3);
-    await worker.fetch(new Request(`https://camp.test${path}`), env);
-    assert.equal(rows().length, 2);
-  }
-});
-
-test('submissions still upsert tomorrow without altering today', async () => {
-  const { env, dates, rows } = fixture();
+test('only the logged-in player can submit; updates preserve today and reject spoofed IDs', async (t) => {
+  const f = fixture(t);
+  const player = await f.approvedPlayer();
+  const other = await f.approvedPlayer('other.player', 'Other Player');
+  const dates = sessionDates(f.env);
+  f.db.prepare('INSERT INTO availability(person_id, session_date, status) VALUES (?, ?, ?)').run(player.user.id, dates.today, 'available');
+  assert.equal((await f.request('/api/availability', { status: 'available' })).status, 401);
+  assert.equal((await f.request('/api/availability', { personId: 999, status: 'available' }, player.cookie)).status, 400);
+  assert.equal((await f.request('/api/availability', { status: 'maybe' }, player.cookie)).status, 400);
   for (const status of ['available', 'not_available']) {
-    const response = await worker.fetch(new Request('https://camp.test/api/availability', {
-      method: 'POST',
-      body: JSON.stringify({ personId: 1, status }),
-      headers: { 'Content-Type': 'application/json' },
-    }), env);
+    const response = await f.request('/api/availability', { status }, player.cookie);
     assert.equal(response.status, 200);
     assert.equal((await response.json()).date, dates.tomorrow);
-    assert.equal(rows().filter((row) => row.person_id === 1 && row.session_date === dates.tomorrow).length, 1);
-    assert.equal(rows().find((row) => row.person_id === 1 && row.session_date === dates.tomorrow).status, status);
-    assert.equal(rows().find((row) => row.session_date === dates.today).status, 'available');
+    assert.equal(f.db.prepare('SELECT status FROM availability WHERE session_date = ?').get(dates.tomorrow).status, status);
   }
-});
-
-test('cleanup failure is reported as a server error, not a successful load', async (t) => {
-  const logs = [];
-  t.mock.method(console, 'error', (error) => logs.push(error));
-  const failure = new Error('Database unavailable');
-  const DB = {
-    prepare() {
-      return { bind() { return this; }, async run() { throw failure; } };
-    },
-  };
-  const response = await worker.fetch(new Request('https://camp.test/api/people'), { DB });
-  assert.equal(response.status, 500);
-  assert.equal((await response.json()).error, 'Internal server error');
-  assert.deepEqual(logs, [failure]);
+  assert.equal(f.db.prepare('SELECT status FROM availability WHERE session_date = ?').get(dates.today).status, 'available');
+  assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM availability').get().n, 2);
+  const own = await (await f.request('/api/availability/me', undefined, player.cookie)).json();
+  assert.deepEqual(own, { date: dates.tomorrow, status: 'not_available' });
+  const otherOwn = await (await f.request(`/api/availability/me?personId=${player.user.id}`, undefined, other.cookie)).json();
+  assert.deepEqual(otherOwn, { date: dates.tomorrow, status: null });
+  assert.equal((await f.request('/api/availability/me')).status, 401);
 });

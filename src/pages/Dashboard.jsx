@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, formatDate } from '../api.js';
+import { Link } from 'react-router-dom';
 
 export default function Dashboard() {
   const [data, setData] = useState(null);
@@ -36,6 +37,7 @@ export default function Dashboard() {
 
   return (
     <section className="card">
+      <p><Link to="/admin">Back to camp administration</Link></p>
       <div className="row-between">
         <h1>Available for {day}</h1>
         <button className="btn btn-ghost" onClick={() => setRefresh((value) => value + 1)} disabled={loading}>

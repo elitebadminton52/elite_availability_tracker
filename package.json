@@ -4,7 +4,9 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "test": "node --test",
+    "auth:setup:local": "node scripts/auth-keys.js",
+    "auth:keys:production": "node scripts/auth-keys.js --production",
+    "test": "node --experimental-sqlite --test",
     "dev": "vite",
     "build": "vite build",
     "preview": "npm run build && vite preview",

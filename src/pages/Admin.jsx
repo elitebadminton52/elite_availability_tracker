@@ -1,18 +1,27 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api.js';
 import AdminNotifications from '../components/AdminNotifications.jsx';
+import RegistrationApprovals from '../components/RegistrationApprovals.jsx';
+import { Link } from 'react-router-dom';
 
 export default function Admin() {
   const [authed, setAuthed] = useState(null);
+  const [authError, setAuthError] = useState('');
+  const [retry, setRetry] = useState(0);
   const logout = useCallback(() => setAuthed(false), []);
 
   useEffect(() => {
     api
       .adminMe()
       .then(() => setAuthed(true))
-      .catch(() => setAuthed(false));
-  }, []);
+      .catch((err) => {
+        if (err.status === 401) setAuthed(false);
+        else setAuthError(err.message);
+      });
+  }, [retry]);
 
+  if (authError) return <div className="card"><p className="alert alert-error" role="alert">{authError}</p>
+    <button className="btn btn-primary" onClick={() => { setAuthError(''); setRetry((value) => value + 1); }}>Retry</button></div>;
   if (authed === null) return <p className="card muted">Loading…</p>;
   return authed ? <AdminPanel onLogout={logout} /> : <AdminLogin onLogin={() => setAuthed(true)} />;
 }
@@ -46,6 +55,7 @@ function AdminLogin({ onLogin }) {
         <input
           id="pw"
           type="password"
+          autoComplete="current-password"
           className="input"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
@@ -69,15 +79,17 @@ function AdminPanel({ onLogout }) {
   const [busy, setBusy] = useState(false);
   const [activeTab, setActiveTab] = useState('people');
 
-  const load = () =>
-    api
-      .getPeople()
-      .then(({ people }) => setPeople(people))
-      .catch((e) => setMessage({ type: 'error', text: e.message }));
+  const load = useCallback(async () => {
+    const { people } = await api.getPeople();
+    setPeople(people);
+  }, []);
 
   useEffect(() => {
-    load();
-  }, []);
+    load().catch((err) => {
+      if (err.status === 401) onLogout();
+      else setMessage({ type: 'error', text: err.message });
+    });
+  }, [load, onLogout]);
 
   const tabs = [
     { id: 'people', label: 'Manage people' },
@@ -118,7 +130,7 @@ function AdminPanel({ onLogout }) {
   };
 
   const remove = async (person) => {
-    if (!confirm(`Remove ${person.name} from the camp list? Their availability history will also be deleted.`)) return;
+    if (!confirm(`Remove ${person.name} from the camp list? Their account, sessions, and availability history will also be deleted.`)) return;
     setMessage(null);
     try {
       await api.removePerson(person.id);
@@ -130,8 +142,12 @@ function AdminPanel({ onLogout }) {
   };
 
   const logout = async () => {
-    await api.adminLogout().catch(() => {});
-    onLogout();
+    try {
+      await api.adminLogout();
+      onLogout();
+    } catch (err) {
+      setMessage({ type: 'error', text: err.message });
+    }
   };
 
   const visible = people.filter((p) => p.name.toLowerCase().includes(filter.trim().toLowerCase()));
@@ -140,6 +156,7 @@ function AdminPanel({ onLogout }) {
     <section className="card">
       <div className="row-between">
         <h1>Camp administration</h1>
+        <Link to="/dashboard">Availability dashboard</Link>
         <button className="btn btn-ghost" onClick={logout}>
           Log out
         </button>
@@ -167,6 +184,7 @@ function AdminPanel({ onLogout }) {
       <div id="admin-panel-people" role="tabpanel" aria-labelledby="admin-tab-people"
         hidden={activeTab !== 'people'} tabIndex={0}>
       <h2>Manage camp players</h2>
+      <RegistrationApprovals onLogout={onLogout} onApproved={load} />
       <form className="add-form" onSubmit={add}>
         <input
           className="input"

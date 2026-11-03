@@ -1,4 +1,8 @@
 import { sessionDates } from './dates.js';
+import { authRoute, approvalRoute, currentPlayer, playerProfile } from './accounts.js';
+import { HttpError, json, readJson } from './http.js';
+import { adminNotifications, playerNotifications } from './notifications.js';
+import { decryptField, encryptField, lookup, normalizeName, protectPeople, rateLimit, readEncrypted, readPeople } from './privacy.js';
 
 const SESSION_COOKIE = 'admin_session';
 const SESSION_TTL_SECONDS = 60 * 60 * 12; // 12 hours
@@ -11,6 +15,12 @@ export default {
       return new Response('Not found', { status: 404 });
     }
     try {
+      if (request.method !== 'GET' && request.method !== 'HEAD') {
+        const origin = request.headers.get('Origin');
+        if ((origin && origin !== url.origin) || request.headers.get('Sec-Fetch-Site') === 'cross-site') {
+          throw new HttpError(403, 'Cross-site requests are not allowed');
+        }
+      }
       const dates = sessionDates(env);
       await env.DB.prepare('DELETE FROM availability WHERE session_date NOT IN (?, ?)')
         .bind(dates.today, dates.tomorrow)
@@ -18,9 +28,14 @@ export default {
       await env.DB.prepare('DELETE FROM notifications WHERE notification_date < ?')
         .bind(dates.today)
         .run();
+      for (const table of ['user_sessions', 'auth_requests', 'auth_attempts']) {
+        await env.DB.prepare(`DELETE FROM ${table} WHERE expires_at <= ?`).bind(Date.now()).run();
+      }
+      await protectPeople(env);
       return await route(request, env, url, dates);
     } catch (err) {
-      console.error(err);
+      if (err instanceof HttpError) return json({ error: err.message }, err.status);
+      console.error('API request failed', url.pathname, err);
       return json({ error: 'Internal server error' }, 500);
     }
   },
@@ -29,21 +44,33 @@ export default {
 async function route(request, env, url, dates) {
   const { pathname } = url;
   const method = request.method;
+  if (pathname.startsWith('/api/auth/')) return authRoute(request, env, pathname);
+  const admin = await isAdmin(request, env);
+  let player = null;
+  if (!pathname.startsWith('/api/admin/')) {
+    player = await currentPlayer(request, env);
+    if (!player && !admin) throw new HttpError(401, 'Please sign in');
+  }
 
   // ---------- Public API ----------
   if (pathname === '/api/notifications' && method === 'GET') {
-    const { results } = await env.DB.prepare(
-      'SELECT * FROM notifications WHERE notification_date = ? ORDER BY notification_id DESC'
-    ).bind(dates.today).all();
-    return json({ date: dates.today, notifications: results });
+    return playerNotifications(env, dates, player);
   }
 
   if (pathname === '/api/people' && method === 'GET') {
-    const { results } = await env.DB.prepare('SELECT id, name FROM people ORDER BY name COLLATE NOCASE').all();
-    return json({ people: results });
+    if (!admin) throw new HttpError(403, 'Only the coach can manage camp players');
+    return json({ people: await readPeople(env) });
+  }
+
+  if (pathname === '/api/availability/me' && method === 'GET') {
+    if (!player) throw new HttpError(403, 'Sign in as a player to view your availability');
+    const response = await env.DB.prepare('SELECT status FROM availability WHERE person_id = ? AND session_date = ?')
+      .bind(player.person_id, dates.tomorrow).first();
+    return json({ date: dates.tomorrow, status: response?.status ?? null });
   }
 
   if (pathname === '/api/availability' && method === 'GET') {
+    if (!admin) throw new HttpError(403, 'Only the coach can view the availability dashboard');
     const day = url.searchParams.get('day') ?? 'tomorrow';
     if (day !== 'today' && day !== 'tomorrow') {
       return json({ error: 'day must be today or tomorrow' }, 400);
@@ -57,24 +84,28 @@ async function route(request, env, url, dates) {
     )
       .bind(date)
       .all();
+    const records = await Promise.all(results.map(async (record) => ({
+      ...record, name: await decryptField(env, record.name, 'person-name'),
+    })));
+    records.sort((a, b) => a.name.localeCompare(b.name));
     const { total } = await env.DB.prepare('SELECT COUNT(*) AS total FROM people').first();
     return json({
       date,
-      available: results.filter((r) => r.status === 'available'),
-      notAvailable: results.filter((r) => r.status === 'not_available'),
+      available: records.filter((r) => r.status === 'available'),
+      notAvailable: records.filter((r) => r.status === 'not_available'),
       totalPeople: total,
     });
   }
 
   if (pathname === '/api/availability' && method === 'POST') {
     const body = await readJson(request);
-    const personId = Number(body?.personId);
+    if (!player) throw new HttpError(401, 'Sign in as a player to mark your availability');
+    const personId = player.person_id;
     const status = body?.status;
-    if (!Number.isInteger(personId) || !STATUSES.has(status)) {
-      return json({ error: 'personId and a valid status are required' }, 400);
+    if ('personId' in (body || {}) || !STATUSES.has(status)) {
+      return json({ error: 'Send only a valid availability status for your own account' }, 400);
     }
-    const person = await env.DB.prepare('SELECT id, name FROM people WHERE id = ?').bind(personId).first();
-    if (!person) return json({ error: 'Person not found' }, 404);
+    const person = await playerProfile(env, player);
 
     const date = dates.tomorrow;
     await env.DB.prepare(
@@ -93,7 +124,8 @@ async function route(request, env, url, dates) {
     if (!env.ADMIN_PASSWORD || !env.SESSION_SECRET) {
       return json({ error: 'Admin login is not configured on the server' }, 500);
     }
-    const body = await readJson(request);
+    await rateLimit(request, env, 'admin-login');
+    const body = await readEncrypted(request, env);
     const password = typeof body?.password === 'string' ? body.password : '';
     if (!(await safeEqual(password, env.ADMIN_PASSWORD))) {
       return json({ error: 'Invalid password' }, 401);
@@ -111,55 +143,30 @@ async function route(request, env, url, dates) {
   }
 
   if (pathname.startsWith('/api/admin/')) {
-    if (!(await isAdmin(request, env))) return json({ error: 'Unauthorized' }, 401);
+    if (!admin) return json({ error: 'Unauthorized' }, 401);
+    if (pathname.startsWith('/api/admin/registrations')) return approvalRoute(request, env, pathname);
+    if (pathname === '/api/admin/notifications' || pathname.startsWith('/api/admin/notifications/')) {
+      return adminNotifications(request, env, pathname, dates);
+    }
 
     if (pathname === '/api/admin/me' && method === 'GET') {
       return json({ ok: true });
     }
 
-    if (pathname === '/api/admin/notifications' && method === 'GET') {
-      const { results } = await env.DB.prepare(
-        'SELECT * FROM notifications WHERE notification_date >= ? ORDER BY notification_date, notification_id DESC'
-      ).bind(dates.today).all();
-      return json({ date: dates.today, notifications: results });
-    }
-
-    if (pathname === '/api/admin/notifications' && method === 'POST') {
-      const body = await readJson(request);
-      const message = typeof body?.notification_message === 'string' ? body.notification_message.trim() : '';
-      const date = body?.notification_date;
-      const type = body?.notification_type;
-      if (type !== 'camp_holiday' && type !== 'coaching_plan') {
-        return json({ error: 'Select Camp holiday or Coaching plan' }, 400);
-      }
-      if (!message || message.length > 2000) {
-        return json({ error: 'Notification message is required (max 2000 characters)' }, 400);
-      }
-      if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
-          !Number.isFinite(Date.parse(`${date}T00:00:00Z`)) ||
-          new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date || date < dates.today) {
-        return json({ error: 'Select a valid date of today or later in the camp timezone' }, 400);
-      }
-      const notification = await env.DB.prepare(
-        `INSERT INTO notifications (notification_message, notification_date, notification_type)
-         VALUES (?, ?, ?) RETURNING *`
-      ).bind(message, date, type).first();
-      return json({ notification }, 201);
-    }
-
     if (pathname === '/api/admin/people' && method === 'POST') {
-      const body = await readJson(request);
-      const name = typeof body?.name === 'string' ? body.name.trim().replace(/\s+/g, ' ') : '';
+      const body = await readEncrypted(request, env);
+      const name = normalizeName(body?.name);
       if (!name || name.length > 80) {
         return json({ error: 'Name is required (max 80 characters)' }, 400);
       }
-      const existing = await env.DB.prepare('SELECT id FROM people WHERE name = ?').bind(name).first();
-      if (existing) return json({ error: `"${name}" is already in the list` }, 409);
-
-      const person = await env.DB.prepare('INSERT INTO people (name) VALUES (?) RETURNING id, name')
-        .bind(name)
+      const nameLookup = await lookup(env, name.toLowerCase(), 'person-name');
+      const person = await env.DB.prepare(
+        'INSERT INTO people (name, name_lookup) VALUES (?, ?) ON CONFLICT(name_lookup) DO NOTHING RETURNING id'
+      )
+        .bind(await encryptField(env, name, 'person-name'), nameLookup)
         .first();
-      return json({ person }, 201);
+      if (!person) return json({ error: `"${name}" is already in the list` }, 409);
+      return json({ person: { id: person.id, name } }, 201);
     }
 
     const match = pathname.match(/^\/api\/admin\/people\/(\d+)$/);
@@ -177,21 +184,6 @@ async function route(request, env, url, dates) {
 }
 
 // ---------- Helpers ----------
-
-function json(data, status = 200, headers = {}) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers },
-  });
-}
-
-async function readJson(request) {
-  try {
-    return await request.json();
-  } catch {
-    return null;
-  }
-}
 
 const encoder = new TextEncoder();
 

@@ -1,75 +1,43 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
-import SearchableSelect from '../components/SearchableSelect.jsx';
 import Notifications from '../components/Notifications.jsx';
 import { api, formatDate } from '../api.js';
-import { availabilityOptions } from '../availability-options.js';
-
-const LAST_PERSON_KEY = 'lastPersonId';
+import { useAuth } from '../AuthContext.jsx';
 
 export default function AvailabilityForm() {
-  const [people, setPeople] = useState([]);
-  const [personId, setPersonId] = useState(null);
+  const { user } = useAuth();
   const [sessionDate, setSessionDate] = useState('');
+  const [currentStatus, setCurrentStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(null);
   const [message, setMessage] = useState(null);
-  const [availability, setAvailability] = useState({ available: [], notAvailable: [] });
-  const [showResponded, setShowResponded] = useState(false);
-  const [loadFailed, setLoadFailed] = useState(false);
-  const options = availabilityOptions(people, availability, showResponded);
-  const selectedPerson = options.find((person) => person.id === personId);
 
   useEffect(() => {
     let active = true;
-    Promise.all([api.getPeople(), api.getAvailability()])
-      .then(([{ people }, data]) => {
+    api.getMyAvailability()
+      .then((data) => {
         if (!active) return;
-        setPeople(people);
-        setAvailability(data);
         setSessionDate(data.date);
-        const last = Number(localStorage.getItem(LAST_PERSON_KEY));
-        if (availabilityOptions(people, data).some((p) => p.id === last)) setPersonId(last);
+        setCurrentStatus(data.status);
       })
-      .catch((e) => {
-        if (!active) return;
-        setLoadFailed(true);
-        setMessage({ type: 'error', text: e.message });
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
+      .catch((err) => { if (active) setMessage({ type: 'error', text: err.message }); })
+      .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, []);
+  }, [user.id]);
 
   const submit = async (status) => {
-    if (!selectedPerson || saving) return;
+    if (saving || loading || !sessionDate) return;
     setSaving(status);
     setMessage(null);
     try {
-      const res = await api.setAvailability(personId, status);
-      setAvailability((previous) => {
-        const current = res.date === sessionDate ? previous : { available: [], notAvailable: [] };
-        return {
-          available: [
-            ...current.available.filter((person) => person.id !== personId),
-            ...(status === 'available' ? [{ id: personId }] : []),
-          ],
-          notAvailable: [
-            ...current.notAvailable.filter((person) => person.id !== personId),
-            ...(status === 'not_available' ? [{ id: personId }] : []),
-          ],
-        };
-      });
-      setSessionDate(res.date);
-      if (!showResponded) setPersonId(null);
-      localStorage.setItem(LAST_PERSON_KEY, String(personId));
+      const result = await api.setAvailability(status);
+      setSessionDate(result.date);
+      setCurrentStatus(result.status);
       setMessage({
         type: 'success',
-        text: `Thanks ${res.name}! You're marked as ${status === 'available' ? 'AVAILABLE ✅' : 'NOT AVAILABLE ❌'} for ${formatDate(res.date)}.`,
+        text: `Thanks ${user.name}! You're marked as ${status === 'available' ? 'AVAILABLE' : 'NOT AVAILABLE'} for ${formatDate(result.date)}.`,
       });
-    } catch (e) {
-      setMessage({ type: 'error', text: e.message });
+    } catch (err) {
+      setMessage({ type: 'error', text: err.message });
     } finally {
       setSaving(null);
     }
@@ -78,63 +46,22 @@ export default function AvailabilityForm() {
   return (
     <section className="card">
       <Notifications />
-      <h1>Will you be at coaching tomorrow?</h1>
-      {sessionDate && <p className="muted">Session: {formatDate(sessionDate)}</p>}
-
-      <label className="label">Your name {!showResponded? '(only showing players who have not responded)' : ''}</label>
-      {loading ? (
-        <p className="muted">Loading names…</p>
-      ) : loadFailed ? (
-        <p className="muted">Unable to load players and responses. Reload the page to try again.</p>
-      ) : people.length === 0 ? (
-        <p className="muted">No players have been added yet. Ask the coach to add you.</p>
-      ) : options.length === 0 ? (
-        <p className="muted">Everyone has already responded for tomorrow. Use “Change my response” to update an answer.</p>
-      ) : (
-        <SearchableSelect
-          key={showResponded ? 'all-players' : 'pending-players'}
-          options={options}
-          value={personId}
-          disabled={Boolean(saving)}
-          onChange={(id) => {
-            setPersonId(id);
-            setMessage(null);
-          }}
-          placeholder="Search your name…"
-        />
-      )}
-      {!loading && !loadFailed && people.length > 0 && (
-        <p>
-          <button
-            type="button"
-            className="btn btn-ghost"
-            disabled={Boolean(saving)}
-            aria-pressed={showResponded}
-            onClick={() => {
-              setShowResponded((value) => !value);
-              setPersonId(null);
-              setMessage(null);
-            }}
-          >
-            {showResponded ? 'Show only players who have not responded' : 'Change my response'}
-          </button>
-        </p>
-      )}
-
+      <h1>Hi {user.name}</h1>
+      {loading ? <p className="muted" role="status">Loading tomorrow's session…</p> :
+        sessionDate && <h2 className="list-header">Will you be available tomorrow, {formatDate(sessionDate)}?</h2>}
+      {currentStatus && <p className="muted">Your response: <strong>{currentStatus === 'available' ? 'Available' : 'Not Available'}</strong>. You can change it below.</p>}
       <div className="actions">
-        <button className="btn btn-success" disabled={!selectedPerson || Boolean(saving)} onClick={() => submit('available')}>
+        <button className="btn btn-success" disabled={loading || !sessionDate || Boolean(saving)}
+          aria-pressed={currentStatus === 'available'} onClick={() => submit('available')}>
           {saving === 'available' ? 'Saving…' : 'Available'}
         </button>
-        <button className="btn btn-danger" disabled={!selectedPerson || Boolean(saving)} onClick={() => submit('not_available')}>
+        <button className="btn btn-danger" disabled={loading || !sessionDate || Boolean(saving)}
+          aria-pressed={currentStatus === 'not_available'} onClick={() => submit('not_available')}>
           {saving === 'not_available' ? 'Saving…' : 'Not Available'}
         </button>
       </div>
-
       {message && <div role={message.type === 'error' ? 'alert' : 'status'} className={`alert alert-${message.type}`}>{message.text}</div>}
-
-      <p className="muted small">
-        You can change your response any time before the session. <Link to="/dashboard">See who's coming →</Link>
-      </p>
+      <p className="muted small">You can change your response using the buttons above.</p>
     </section>
   );
 }

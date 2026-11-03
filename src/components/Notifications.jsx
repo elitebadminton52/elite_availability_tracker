@@ -40,10 +40,11 @@ export default function Notifications() {
       {error && <div className="alert alert-error" role="alert">Unable to load camp notices: {error}</div>}
       {data?.notifications.length > 0 && (
         <section aria-label="Camp notices">
-          <h2>Camp notices for {formatDate(data.date)}</h2>
+          <h2>Camp notices and your coaching plan</h2>
           {data.notifications.map((notice) => (
             <article key={notice.notification_id} className={`camp-notice camp-notice-${notice.notification_type}`}>
               <strong>{notificationTypes[notice.notification_type]}</strong>
+              <p className="muted">{notice.notification_type === 'coaching_plan' ? 'Camp date' : 'Notice date'}: {formatDate(notice.notification_date)}</p>
               <p>{notice.notification_message}</p>
             </article>
           ))}
