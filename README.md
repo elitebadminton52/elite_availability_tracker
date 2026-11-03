@@ -16,6 +16,10 @@ Use Node.js 22.8 or later for development and the built-in SQLite regression tes
   require linking instead of creating another player. Requests can also be rejected.
 - `/`: signed-in players see "Hi [name]", tomorrow's session date, and Available /
   Not Available buttons. The latest response wins. No name dropdown is shown.
+  Once a response is saved (including after reloading), the buttons are replaced
+  by "You already marked as [status]" and **Change your response**. Selecting
+  that option reveals the two buttons; a successful update hides them again.
+  A failed update keeps the buttons available for retry and preserves the saved status.
 - `/dashboard`: **coach-only**, accessed through the Availability dashboard link
   inside the admin page. Select Today or Tomorrow (default), view available
   players and response counts. Data refreshes every 30 seconds. Normal players

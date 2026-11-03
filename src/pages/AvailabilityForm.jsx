@@ -10,6 +10,7 @@ export default function AvailabilityForm() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(null);
   const [message, setMessage] = useState(null);
+  const [editing, setEditing] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -32,6 +33,7 @@ export default function AvailabilityForm() {
       const result = await api.setAvailability(status);
       setSessionDate(result.date);
       setCurrentStatus(result.status);
+      setEditing(false);
       setMessage({
         type: 'success',
         text: `Thanks ${user.name}! You're marked as ${status === 'available' ? 'AVAILABLE' : 'NOT AVAILABLE'} for ${formatDate(result.date)}.`,
@@ -49,7 +51,12 @@ export default function AvailabilityForm() {
       <h1>Hi {user.name}</h1>
       {loading ? <p className="muted" role="status">Loading tomorrow's session…</p> :
         sessionDate && <h2 className="list-header">Will you be available tomorrow, {formatDate(sessionDate)}?</h2>}
-      {currentStatus && <p className="muted">Your response: <strong>{currentStatus === 'available' ? 'Available' : 'Not Available'}</strong>. You can change it below.</p>}
+      {currentStatus && <p className="muted">You already marked as <strong>{currentStatus === 'available' ? 'Available' : 'Not Available'}</strong>.</p>}
+      {currentStatus && !editing ? (
+        <button className="btn btn-ghost" onClick={() => { setEditing(true); setMessage(null); }}>
+          Change your response
+        </button>
+      ) : (
       <div className="actions">
         <button className="btn btn-success" disabled={loading || !sessionDate || Boolean(saving)}
           aria-pressed={currentStatus === 'available'} onClick={() => submit('available')}>
@@ -60,8 +67,8 @@ export default function AvailabilityForm() {
           {saving === 'not_available' ? 'Saving…' : 'Not Available'}
         </button>
       </div>
+      )}
       {message && <div role={message.type === 'error' ? 'alert' : 'status'} className={`alert alert-${message.type}`}>{message.text}</div>}
-      <p className="muted small">You can change your response using the buttons above.</p>
     </section>
   );
 }
